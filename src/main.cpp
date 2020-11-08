@@ -1,16 +1,15 @@
 #include <NeoSWSerial.h>
-#include <HC12.h>
 
 const int PIN_AN_THROTTLE = 0;
-const int PIN_X_JOY = 1;
-const int PIN_Y_JOY = 2;
+const int PIN_X_JOY = 2;
+const int PIN_Y_JOY = 1;
 
 NeoSWSerial HC12(10, 11); // HC-12 TX Pin, HC-12 RX Pin
 
-uint8_t throttle = 0;
-uint8_t x_joy = 512;
-uint8_t y_joy = 512;
-uint8_t* payload;
+int16_t throttle = 0;
+int16_t x_joy = 512;
+int16_t y_joy = 512;
+unsigned char* payload = new unsigned char[6];
 
 void update_readings() {
     int pot_val = analogRead(PIN_AN_THROTTLE);
@@ -21,11 +20,29 @@ void update_readings() {
 
 void update_payload() {
     update_readings();
-    payload[0] = throttle;
-    payload[1] = x_joy;
-    payload[2] = y_joy;
+    payload[0] = throttle >> 8;
+    payload[1] = throttle & 0xFF;
+    payload[2] = x_joy >> 8;
+    payload[3] = x_joy & 0xFF;
+    payload[4] = y_joy >> 8;
+    payload[5] = y_joy & 0xF;
 }
 
+void printBits(unsigned int num)
+{
+    for(int bit=0;bit<(sizeof(unsigned int) * 8); bit++)
+    {
+        Serial.print(num & 0x01);
+        num = num >> 1;
+    }
+}
+
+void printChar(char a) {
+    int i;
+    for (i = 0; i < 8; i++) {
+        Serial.print(!!((a << i) & 0x80));
+    }
+}
 
 void setup() {
     Serial.begin(9600);             // Serial port to computer
@@ -35,8 +52,23 @@ void setup() {
 void loop() {
     update_payload();
     if (throttle < 0) { throttle=0;}
+    HC12.print('<');
+    for (int i = 0; i < 6; i++) {
+        HC12.print(payload[i]);
+        if (i != 5) {
+            HC12.write(";");
+        }
+    }
+    Serial.println();
+    HC12.print('>');
 
-    HC12.write(payload, 3);
+//    Serial.print("Throttle: ");
+//    Serial.print(throttle);
+//    Serial.print(" X_JOY: ");
+//    Serial.print(x_joy);
+//    Serial.print(" Y_JOY: ");
+//    Serial.println(y_joy);
+    delay(100);
 }
 
 
