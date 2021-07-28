@@ -1,56 +1,94 @@
 #include <NeoSWSerial.h>
+#include "../.pio/libdeps/uno/PacketSerial/src/PacketSerial.h"
 
 const int PIN_AN_THROTTLE = 0;
 const int PIN_X_JOY = 2;
 const int PIN_Y_JOY = 1;
 
-NeoSWSerial HC12(10, 11); // HC-12 TX Pin, HC-12 RX Pin
+// https://forum.arduino.cc/index.php?action=dlattach;topic=596828.0;attach=294205
+NeoSWSerial HC12neo(6, 5); // TX Pin HC12 => RX PIN 5 | TX PIN 6 => RX PIN HC12
+PacketSerial HC12;
 
-int16_t throttle = 0;
-int16_t x_joy = 512;
-int16_t y_joy = 512;
-uint8_t * payload = new uint8_t[6];
+/* Sensor variable */
+struct CONTROLS {
+    int16_t throttle = 0;
+    int16_t x_joy = 512;
+    int16_t y_joy = 512;
+} controls;
 
-void update_readings() {
+struct SENSORS {
+    float temperature = 0;
+    float altitude = 0;
+    float x_angle = 0;
+    float y_angle = 0;
+    float z_angle = 0;
+    float q[4] = {0,0,0,0};
+} sensors;
+
+uint32_t last_sensor_update = millis();
+uint32_t last_control_broadcast = millis();
+
+void update_control_data() {
     int pot_val = analogRead(PIN_AN_THROTTLE);
-    throttle = map(pot_val, 40, 1023, 0, 180);
-    x_joy = analogRead(PIN_X_JOY);
-    y_joy = analogRead(PIN_Y_JOY);
+    controls.throttle = map(pot_val, 40, 1023, 0, 180);
+    if (controls.throttle < 0) { controls.throttle = 0; }
+    controls.x_joy = analogRead(PIN_X_JOY);
+    controls.y_joy = analogRead(PIN_Y_JOY);
 }
 
-void update_payload() {
-    update_readings();
-    payload[0] = throttle >> 8;
-    payload[1] = throttle & 0xFF;
-    payload[2] = x_joy >> 8;
-    payload[3] = x_joy & 0xFF;
-    payload[4] = y_joy >> 8;
-    payload[5] = y_joy & 0xFF;
+void print_all_data() {
+    Serial.print(controls.throttle);
+    Serial.print(";");
+    Serial.print(controls.x_joy);
+    Serial.print(";");
+    Serial.print(controls.y_joy);
+    Serial.print(";");
+    Serial.print(sensors.altitude);
+    Serial.print(";");
+    Serial.print(sensors.temperature);
+    Serial.print(";");
+    Serial.print(sensors.x_angle);
+    Serial.print(";");
+    Serial.print(sensors.y_angle);
+    Serial.print(";");
+    Serial.print(sensors.z_angle);
+    for (int i = 0; i < 4; ++i) {
+        Serial.print(";");
+        Serial.print(sensors.q[i]);
+    }
+    Serial.print(";");
+    Serial.println(millis() - last_sensor_update > 2000 ? 1 : 0);
 }
-void print_uint8_t(uint8_t n) {
-    int i;
-    for (i = 8; i >= 0; i--)
-        Serial.print((n & (1<<i)) >> i);
+
+void onPacketReceived(const uint8_t* buffer, size_t size) {
+    if (size == sizeof(sensors)) {
+        /** Update controls **/
+        memcpy(&sensors, buffer, size);
+        last_sensor_update = millis();
+
+        /** Send current telemetry back **/
+        HC12.send((uint8_t *)&controls, sizeof(controls));
+        last_control_broadcast = millis();
+    }
 }
+
 void setup() {
     Serial.begin(9600);             // Serial port to computer
-    HC12.begin(9600);               // Serial port to HC12
+    HC12neo.begin(9600);               // Serial port to HC12
+    HC12.setStream(&HC12neo);
+    HC12.setPacketHandler(&onPacketReceived);
 }
 
 void loop() {
-    update_payload();
-    if (throttle < 0) { throttle=0;}
-    HC12.print('<');
-    HC12.write(payload, 6);
-    HC12.print('>');
+    update_control_data();
+    HC12.update();
 
-    Serial.print("Throttle: ");
-    Serial.print(throttle);
-    Serial.print(" X_JOY: ");
-    Serial.print(x_joy);
-    Serial.print(" Y_JOY: ");
-    Serial.println(y_joy);
-    delay(100);
+    if (millis() - last_control_broadcast > 500) {
+        HC12.send((uint8_t *)&controls, sizeof(controls));
+        last_control_broadcast = millis();
+    }
+
+    print_all_data();
 }
 
 
